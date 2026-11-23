@@ -115,20 +115,24 @@ const FAILURES_KEPT = 20
 async function projectState(
   call: (extension: string, action: string, args: JsonValue) => Promise<unknown>,
 ): Promise<ProjectState | undefined> {
-  const [status, info] = await Promise.all([
+  const lastLanding = async () => {
+    const info = (await call('lineage', 'info', null)) as { roots?: number[] }
+    const root = info.roots?.[0]
+    if (root === undefined) return undefined
+    const [event] = (await call('lineage', 'recent', {
+      id: root,
+      limit: 1,
+      types: ['landed'],
+    })) as RootEvent[]
+    return event
+  }
+  const [status, landing] = await Promise.all([
     call('status', 'status', { since: Date.now() - DAY }).catch(meansNone) as Promise<
       Partial<Status> | undefined
     >,
-    call('lineage', 'info', null).catch(meansNone) as Promise<{ roots?: number[] } | undefined>,
+    lastLanding().catch(meansNone),
   ])
   if (!status?.questions) return undefined
-  const root = info?.roots?.[0]
-  const [landing] =
-    root === undefined
-      ? []
-      : (((await call('lineage', 'recent', { id: root, limit: 1, types: ['landed'] }).catch(
-          meansNone,
-        )) as RootEvent[] | undefined) ?? [])
   const failures = status.failures?.length ?? 0
   return {
     questions: {
