@@ -76,7 +76,7 @@ it('names the Tailscale port of each project the registry knows, for pages opene
   ])
 })
 
-it('boards every project: this one and another running with their state, and a stopped one with its last activity', async () => {
+it('boards every project: this one and another running with their state and running previews, and a stopped one with its last activity', async () => {
   const other = createServer((request, response) => {
     response.setHeader('Content-Type', 'application/json')
     const action = request.url!.split('/').slice(-3).join('/')
@@ -87,6 +87,7 @@ it('boards every project: this one and another running with their state, and a s
         failures: [{}],
       },
       'lineage/actions/info': { roots: [1] },
+      'instance/actions/list': [{ running: true }, { running: false }],
       'lineage/actions/recent': [{ type: 'landed', title: 'Board', at: 40, sha: 'abc' }],
     }
     response.end(JSON.stringify({ result: results[action] }))
@@ -136,7 +137,7 @@ it('boards every project: this one and another running with their state, and a s
         root: '/work/other',
         current: false,
         url,
-        previews: 0,
+        previews: 1,
         state: {
           questions: { count: 1, first: 'Ship it?' },
           branches: [{ id: 7, title: 'Fix it', busy: true }],

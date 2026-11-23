@@ -1,4 +1,4 @@
-import { dirname, join } from 'node:path'
+import { join } from 'node:path'
 import type { JsonValue } from '@earendil-works/chord/json'
 import { BACKGROUND_CONTEXT as context } from '@earendil-works/chord/context'
 import { defineExtension } from '@earendil-works/pi-durable'
@@ -9,8 +9,6 @@ import { githubRepo, readGithubRepo } from '../../lib/project-identity.ts'
 import type { GithubRepo } from '../../lib/project-identity.ts'
 import { postAction } from '../../lib/remote.ts'
 import type { ExtensionHost } from '../../server/extensions.ts'
-import type { ProjectInfo } from '../../server/project.ts'
-import { git } from '../../lib/git.ts'
 import { MessagesApi } from '../messages/api.ts'
 import { BoardAction, ListAction, PinAction } from './refs.ts'
 import type { BoardProject, ProjectState, RunningProject } from './refs.ts'
@@ -156,100 +154,60 @@ async function projectState(
   }
 }
 
-type Repository = { dir: string; common: string }
-const repositories = new Map<string, Repository>()
-async function repositoryOf(root: string) {
-  const known = repositories.get(root)
-  if (known) return known
-  const [dir, common] = (
-    (await git(root, 'rev-parse', '--path-format=absolute', '--git-dir', '--git-common-dir').catch(
-      meansNone,
-    )) ?? ''
-  ).split('\n')
-  if (!dir || !common) return undefined
-  repositories.set(root, { dir, common })
-  return repositories.get(root)
-}
-
-async function checkoutOwners(known: readonly ProjectInfo[]) {
-  const repos = await Promise.all(
-    known.map((project) =>
-      project.root ? repositoryOf(project.root) : Promise.resolve(undefined),
-    ),
-  )
-  const mainByCommon = new Map<string, string>()
-  known.forEach((project, index) => {
-    const repo = repos[index]
-    if (repo && repo.dir === repo.common && dirname(repo.common) === project.root)
-      mainByCommon.set(repo.common, project.home)
-  })
-  const owners = new Map<string, string>()
-  known.forEach((project, index) => {
-    const repo = repos[index]
-    const main = repo && repo.dir !== repo.common ? mainByCommon.get(repo.common) : undefined
-    if (main) owners.set(project.home, main)
-  })
-  return owners
+async function runningPreviews(
+  call: (extension: string, action: string, args: JsonValue) => Promise<unknown>,
+) {
+  const listed = (await call('instance', 'list', null).catch(meansNone)) as
+    | { running?: unknown }[]
+    | undefined
+  return Array.isArray(listed) ? listed.filter((preview) => preview.running === true).length : 0
 }
 
 export async function board(host: ExtensionHost, signal: AbortSignal): Promise<BoardProject[]> {
   const tailnet = await tailnetPorts(host)
-  const all = await host.projects()
-  const owners = await checkoutOwners(all)
-  const previews = new Map<string, number>()
-  for (const project of all) {
-    const owner = owners.get(project.home)
-    if (owner && project.running && !project.current)
-      previews.set(owner, (previews.get(owner) ?? 0) + 1)
-  }
   const boarded = await Promise.all(
-    all
-      .filter((project) => project.current || !owners.has(project.home))
-      .map(
-        async ({
-          root,
-          home,
-          running,
+    (await host.projects()).map(
+      async ({
+        root,
+        running,
+        current,
+        conversations,
+        openedAt,
+        ...project
+      }): Promise<BoardProject> => {
+        const name = checkoutName(project.name, root)
+        const url = current ? host.system().process.url : running?.url
+        const repo = cachedRepo(root)
+        const activeAt =
+          Math.max(
+            0,
+            ...conversations.map(({ inputAt, answerAt }) => Math.max(inputAt ?? 0, answerAt ?? 0)),
+          ) || openedAt
+        const deadline = AbortSignal.any([signal, AbortSignal.timeout(REMOTE_COUNTS_TIMEOUT_MS)])
+        const call = (extension: string, action: string, args: JsonValue) =>
+          withinDeadline(
+            () =>
+              current
+                ? host.invoke(extension, action, args, deadline)
+                : postAction({ url: url!, label: name }, extension, action, args, deadline),
+            deadline,
+          )
+        const [state, previews] = !url
+          ? [undefined, 0]
+          : await Promise.all([projectState(call), runningPreviews(call)])
+        return {
+          name,
+          ...(root ? { root } : {}),
           current,
-          conversations,
-          openedAt,
-          ...project
-        }): Promise<BoardProject> => {
-          const name = checkoutName(project.name, root)
-          const url = current ? host.system().process.url : running?.url
-          const repo = cachedRepo(root)
-          const activeAt =
-            Math.max(
-              0,
-              ...conversations.map(({ inputAt, answerAt }) =>
-                Math.max(inputAt ?? 0, answerAt ?? 0),
-              ),
-            ) || openedAt
-          const deadline = AbortSignal.any([signal, AbortSignal.timeout(REMOTE_COUNTS_TIMEOUT_MS)])
-          const state = !url
-            ? undefined
-            : await projectState((extension, action, args) =>
-                withinDeadline(
-                  () =>
-                    current
-                      ? host.invoke(extension, action, args, deadline)
-                      : postAction({ url, label: name }, extension, action, args, deadline),
-                  deadline,
-                ),
-              )
-          return {
-            name,
-            ...(root ? { root } : {}),
-            current,
-            ...(url ? { url } : {}),
-            ...(repo && { repo: { name: repo.name, url: repo.url, visibility: repo.visibility } }),
-            ...(root && tailnet[root] ? { tailnetPort: tailnet[root] } : {}),
-            ...(activeAt ? { activeAt } : {}),
-            previews: previews.get(home) ?? 0,
-            ...(state ? { state } : {}),
-          }
-        },
-      ),
+          ...(url ? { url } : {}),
+          ...(repo && { repo: { name: repo.name, url: repo.url, visibility: repo.visibility } }),
+          ...(root && tailnet[root] ? { tailnetPort: tailnet[root] } : {}),
+          ...(activeAt ? { activeAt } : {}),
+          previews,
+          ...(state ? { state } : {}),
+        }
+      },
+    ),
   )
   const rank = (project: BoardProject) => (project.current ? 0 : project.url ? 1 : 2)
   return boarded.toSorted((a, b) => rank(a) - rank(b) || (b.activeAt ?? 0) - (a.activeAt ?? 0))
