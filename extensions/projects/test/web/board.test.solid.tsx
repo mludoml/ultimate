@@ -82,6 +82,7 @@ beforeEach(async () => {
       },
     },
     { name: 'old-app', root: '/work/old-app', current: false, activeAt: 0, previews: 0 },
+    { name: 'my-app', root: "/clients/Bob's app", current: false, previews: 0 },
   ]
   store.start()
   harness.sources[0].open()
@@ -102,6 +103,7 @@ it('shows each project’s state, links running ones and offers a stopped one’
     ['ultimate', null],
     ['my-app', 'http://127.0.0.1:4748/'],
     ['old-app', null],
+    ['my-app', null],
   ])
   expect(cards[0].textContent).toContain('Board')
   expect(cards[0].textContent).toContain('+1 preview')
@@ -110,13 +112,18 @@ it('shows each project’s state, links running ones and offers a stopped one’
   expect(cards[1].textContent).toContain('1 failure today')
   expect(cards[1].textContent).toContain('3 behind origin')
   expect(cards[2].textContent).toContain('stopped')
-  expect(container.textContent).toContain('2 running · 1 stopped')
+  expect(container.textContent).toContain('2 running · 2 stopped')
   await expectDistinctAgentNames(agent)
-  expect(await agent.query({ text: 'ultimate /work/old-app' })).toEqual([
-    expect.objectContaining({ label: 'Copy start command of old-app: ultimate /work/old-app' }),
+  expect(await agent.query({ text: 'Open My App' })).toEqual([
+    expect.objectContaining({ label: 'Open My App (/work/my-app)' }),
+  ])
+  expect(await agent.query({ text: 'Copy start command of My App (/clients' })).toEqual([
+    expect.objectContaining({
+      label: `Copy start command of My App (/clients/Bob's app): ultimate '/clients/Bob'\\''s app'`,
+    }),
   ])
 
   harness.failing = true
   await advance(4_000)
-  expect(container.querySelectorAll('[data-project]')).toHaveLength(3)
+  expect(container.querySelectorAll('[data-project]')).toHaveLength(4)
 })

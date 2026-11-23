@@ -14,17 +14,22 @@ import {
   prettyName,
   showSurface,
   shortenPath,
+  switchConversation,
   useAction,
   useNow,
   usePageVisible,
   useSystem,
 } from '@/sdk/solid'
 import { ProjectSwatch, RepoLabel } from '../sidebar/ui.solid.tsx'
+import { talkToUltimate } from '../subagents/ui.solid.tsx'
 import { target } from './links.ts'
 import { BoardAction } from './refs.ts'
 import type { BoardProject } from './refs.ts'
 
 const BOARD_POLL_MS = 4_000
+
+export const shellQuoted = (path: string) =>
+  /^[\w./~-]+$/.test(path) ? path : `'${path.replaceAll("'", `'\\''`)}'`
 const SHOWN_BRANCHES = 3
 
 export function Board() {
@@ -52,6 +57,11 @@ export function ProjectGrid() {
   const projects = () => board.data() ?? []
   const family = createMemo(() => projects().map((project) => project.name))
   const running = () => projects().filter((project) => project.url).length
+  const label = (project: BoardProject) => {
+    const name = prettyName(project.name)
+    const shared = projects().filter((other) => prettyName(other.name) === name).length > 1
+    return shared && project.root ? `${name} (${project.root})` : name
+  }
   return (
     <div class="min-h-0 flex-1 overflow-y-auto">
       <p class="px-4 pt-3 font-mono text-[11px] text-muted-foreground/70 tabular-nums">
@@ -60,7 +70,9 @@ export function ProjectGrid() {
       <div class="grid grid-cols-[repeat(auto-fill,minmax(18rem,1fr))] gap-3 p-4 pt-2">
         <Show when={board.data()} fallback={<BoardSkeleton />}>
           <For each={projects()} keyed={(project) => project.root ?? project.name}>
-            {(project) => <ProjectCard family={family()} project={project()} />}
+            {(project) => (
+              <ProjectCard family={family()} label={label(project())} project={project()} />
+            )}
           </For>
         </Show>
       </div>
@@ -72,7 +84,7 @@ function BoardSkeleton() {
   return <For each={[0, 1, 2]}>{() => <Skeleton class="h-36 rounded-lg bg-muted/40" />}</For>
 }
 
-function ProjectCard(props: { project: BoardProject; family: readonly string[] }) {
+function ProjectCard(props: { project: BoardProject; label: string; family: readonly string[] }) {
   const system = useSystem()
   const now = useNow(60_000)
   const state = () => props.project.state
@@ -135,7 +147,10 @@ function ProjectCard(props: { project: BoardProject; family: readonly string[] }
           </span>
         </span>
       </span>
-      <Show when={props.project.url} fallback={<Stopped project={props.project} now={now()} />}>
+      <Show
+        when={props.project.url}
+        fallback={<Stopped label={props.label} now={now()} project={props.project} />}
+      >
         <Show
           when={state()}
           fallback={<p class="font-mono text-[11px] text-muted-foreground/70">not answering</p>}
@@ -147,12 +162,13 @@ function ProjectCard(props: { project: BoardProject; family: readonly string[] }
   )
   const card = (render?: ComponentProps<typeof Button>['render']) => (
     <Button
-      aria-label={`Open ${prettyName(props.project.name)}`}
-      class="flex h-auto w-full flex-col items-stretch justify-start gap-3 rounded-lg border border-border/70 bg-card p-3.5 text-left font-normal whitespace-normal transition-colors hover:border-border hover:bg-muted/30 focus-visible:ring-1 focus-visible:ring-ring"
+      aria-label={`Open ${props.label}`}
+      class="flex h-auto w-full flex-col items-stretch justify-start gap-3 rounded-lg border border-border/70 bg-card p-3.5 text-left font-normal whitespace-normal transition-colors hover:border-border hover:bg-muted/30 focus-visible:ring-1 focus-visible:ring-ring disabled:opacity-45 data-disabled:opacity-45"
       data-project={props.project.name}
-      onClick={() => {
-        if (props.project.current) showSurface('agent')
-      }}
+      disabled={!props.project.current && !href()}
+      onClick={() =>
+        props.project.current ? talkToUltimate({ showSurface, switchConversation }) : undefined
+      }
       render={render}
       size={null}
       variant={null}
@@ -238,7 +254,12 @@ function Running(props: { state: NonNullable<BoardProject['state']>; now: number
           )}
         </Show>
         <Show when={props.state.failures > 0}>
-          <span class="text-error">{plural(props.state.failures, 'failure')} today</span>
+          <span class="text-error">
+            {props.state.failuresCapped
+              ? `${props.state.failures}+ failures`
+              : plural(props.state.failures, 'failure')}{' '}
+            today
+          </span>
         </Show>
         <Show when={(props.state.behind ?? 0) > 0}>
           <span class="text-warning">{props.state.behind} behind origin</span>
@@ -248,7 +269,7 @@ function Running(props: { state: NonNullable<BoardProject['state']>; now: number
   )
 }
 
-function Stopped(props: { project: BoardProject; now: number }) {
+function Stopped(props: { project: BoardProject; label: string; now: number }) {
   return (
     <span class="flex flex-col gap-1.5 font-mono text-[11px] text-muted-foreground">
       <span>
@@ -265,8 +286,8 @@ function Stopped(props: { project: BoardProject; now: number }) {
       <Show when={props.project.root}>
         {(root) => (
           <CopyValue
-            field={`start command of ${props.project.name}`}
-            value={`ultimate ${root()}`}
+            field={`start command of ${props.label}`}
+            value={`ultimate ${shellQuoted(root())}`}
           />
         )}
       </Show>

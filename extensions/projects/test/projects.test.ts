@@ -76,7 +76,7 @@ it('names the Tailscale port of each project the registry knows, for pages opene
   ])
 })
 
-it('boards every project: this one and another running with their state, a stopped one with its last activity, and checkouts as previews', async () => {
+it('boards every project: this one and another running with their state, a stopped one with its last activity, checkouts in a project home as its previews', async () => {
   const other = createServer((request, response) => {
     response.setHeader('Content-Type', 'application/json')
     const action = request.url!.split('/').slice(-3).join('/')
@@ -101,20 +101,23 @@ it('boards every project: this one and another running with their state, a stopp
       {
         name: 'stopped',
         root: '/work/stopped',
+        home: '/homes/stopped',
         current: false,
         conversations: [{ id: 1, inputAt: 9, answerAt: 12 }],
       },
       {
         name: 'other',
         root: '/work/other',
+        home: '/homes/other',
         current: false,
         running: { pid: 2, url },
         conversations: [],
       },
-      { name: 'here', root: '/work/here', current: true, conversations: [] },
+      { name: 'here', root: '/work/here', home: '/homes/here', current: true, conversations: [] },
       {
-        name: 'here-1a2b3c4d',
-        root: `${userHome}/.ultimate/projects/here-1a2b3c4d/worktrees/12`,
+        name: '12',
+        root: '/homes/here/checkouts/12',
+        home: '/homes/here-12',
         current: false,
         running: { pid: 3, url: 'http://127.0.0.1:1' },
         conversations: [],

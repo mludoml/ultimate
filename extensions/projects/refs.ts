@@ -26,6 +26,8 @@ export type ProjectState = {
   branches: { id: number; title?: string; busy: boolean }[]
   /** Failed runs in the last 24 hours. */
   failures: number
+  /** The instance keeps only its latest failures, so there may be more than `failures`. */
+  failuresCapped?: true
   /** Commits on origin its clone lacks, when Update knows. */
   behind?: number
   landing?: { title?: string; feature?: string; at?: number }
