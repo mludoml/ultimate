@@ -28,6 +28,7 @@ const services: Record<string, unknown> = {
       { provider: 'b', state: 'failing', lastFail: 2, error: 'invalid_grant' },
     ],
   },
+  conversations: { concluded: async () => new Set([5]) },
   messages: {
     openQuestions: async () => [
       { message: 4, conversation: 9, at: 10, text: 'Ship it?' },
@@ -40,7 +41,12 @@ const host = (off: string[] = []) =>
   ({
     want: (api: { name: string }) => (off.includes(api.name) ? undefined : services[api.name]),
     need: (api: { name: string }) => services[api.name],
-    conversations: () => [{ busy: true }, { busy: false }, { busy: true }],
+    conversations: () => [
+      { id: 1, busy: true },
+      { id: 4, label: 'coordinator', title: 'Older', busy: false, inputAt: 10 },
+      { id: 5, label: 'coordinator', title: 'Concluded', busy: false, inputAt: 30 },
+      { id: 6, label: 'coordinator', title: 'Newer', busy: true, inputAt: 20 },
+    ],
     system: () => ({ process: { generation: 3 } }),
     extensions: () => [
       {
@@ -67,7 +73,7 @@ const extensions = [
   { name: 'deploys', source: 'user', enabled: true, error: 'SyntaxError' },
 ]
 
-it('summarizes the clone, failures, providers, questions and busy conversations from their owners', async () => {
+it('summarizes the clone, failures, providers, questions, busy conversations and open branches from their owners', async () => {
   expect(await status(host(), 940, 1000, signal)).toEqual({
     at: 1000,
     generation: 3,
@@ -79,6 +85,10 @@ it('summarizes the clone, failures, providers, questions and busy conversations 
     ],
     questions: { count: 2, first: { text: 'Ship it?', conversation: 9, message: 4 } },
     busy: 2,
+    branches: [
+      { id: 6, title: 'Newer', busy: true, inputAt: 20 },
+      { id: 4, title: 'Older', busy: false, inputAt: 10 },
+    ],
     extensions,
   })
   expect((await status(host(), 960, 1000, signal)).failures).toEqual([])
@@ -90,6 +100,10 @@ it('leaves out what an extension that is off owns', async () => {
     generation: 3,
     questions: { count: 2, first: { text: 'Ship it?', conversation: 9, message: 4 } },
     busy: 2,
+    branches: [
+      { id: 6, title: 'Newer', busy: true, inputAt: 20 },
+      { id: 4, title: 'Older', busy: false, inputAt: 10 },
+    ],
     extensions,
   })
 })

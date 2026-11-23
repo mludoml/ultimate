@@ -3,6 +3,7 @@ import { defineExtension } from '@earendil-works/pi-durable'
 import { implementAction } from '../../lib/actions.ts'
 import { meansNone } from '../../lib/errors.ts'
 import type { ExtensionHost } from '../../server/extensions.ts'
+import { ConversationsApi } from '../conversations/api.ts'
 import { HealthApi } from '../health/api.ts'
 import { MessagesApi } from '../messages/api.ts'
 import { UpdateApi } from '../update/api.ts'
@@ -49,12 +50,13 @@ export async function status(
   const watchdog = host.want(WatchdogApi)
   const health = host.want(HealthApi)
   const updateState = update?.state().catch(meansNone)
-  const [clone, failures, providers, open, progress] = await Promise.all([
+  const [clone, failures, providers, open, progress, concluded] = await Promise.all([
     updateState,
     watchdog?.failures(since),
     health?.providers(),
     host.need(MessagesApi).openQuestions(context),
     projectProgress(host, signal),
+    host.need(ConversationsApi).concluded(context),
   ])
   const first = open[0]
   return {
@@ -103,6 +105,16 @@ export async function status(
         : {}),
     },
     busy: host.conversations().filter((conversation) => conversation.busy).length,
+    branches: host
+      .conversations()
+      .filter(({ id, label }) => label === 'coordinator' && !concluded.has(id))
+      .toSorted((a, b) => (b.inputAt ?? 0) - (a.inputAt ?? 0))
+      .map(({ id, title, busy, inputAt }) => ({
+        id,
+        ...(title ? { title } : {}),
+        busy,
+        ...(inputAt ? { inputAt } : {}),
+      })),
     extensions: host.extensions().map(({ name, source, enabled, server }) => ({
       name,
       source,
@@ -114,6 +126,7 @@ export async function status(
 
 export default function statusExtension(host: ExtensionHost) {
   host.need(MessagesApi)
+  host.need(ConversationsApi)
   host.want(UpdateApi)
   host.want(WatchdogApi)
   host.want(HealthApi)

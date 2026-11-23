@@ -3,7 +3,7 @@ import { createServer } from 'node:http'
 import type { AddressInfo } from 'node:net'
 import { join } from 'node:path'
 import { expect, it } from 'vitest'
-import { list } from '../server.ts'
+import { board, list } from '../server.ts'
 import type { ExtensionHost } from '../../../server/extensions.ts'
 import { temp } from '../../../test/helpers.ts'
 
@@ -74,4 +74,85 @@ it('names the Tailscale port of each project the registry knows, for pages opene
     ['other', undefined],
     ['unpublished', undefined],
   ])
+})
+
+it('boards every project: this one and another running with their state, a stopped one with its last activity, and checkouts as previews', async () => {
+  const other = createServer((request, response) => {
+    response.setHeader('Content-Type', 'application/json')
+    const action = request.url!.split('/').slice(-3).join('/')
+    const results: Record<string, unknown> = {
+      'status/actions/status': {
+        questions: { count: 1, first: { text: 'Ship it?' } },
+        branches: [{ id: 7, title: 'Fix it', busy: true, inputAt: 5 }],
+        failures: [{}],
+        head: { behind: 2 },
+      },
+      'lineage/actions/info': { roots: [1] },
+      'lineage/actions/recent': [{ type: 'landed', title: 'Board', at: 40, sha: 'abc' }],
+    }
+    response.end(JSON.stringify({ result: results[action] }))
+  })
+  await new Promise<void>((done) => other.listen(0, '127.0.0.1', done))
+  const url = `http://127.0.0.1:${(other.address() as AddressInfo).port}`
+  const userHome = await temp('ultimate-projects-')
+  const host = {
+    userHome,
+    projects: async () => [
+      {
+        name: 'stopped',
+        root: '/work/stopped',
+        current: false,
+        conversations: [{ id: 1, inputAt: 9, answerAt: 12 }],
+      },
+      {
+        name: 'other',
+        root: '/work/other',
+        current: false,
+        running: { pid: 2, url },
+        conversations: [],
+      },
+      { name: 'here', root: '/work/here', current: true, conversations: [] },
+      {
+        name: 'here-1a2b3c4d',
+        root: `${userHome}/.ultimate/projects/here-1a2b3c4d/worktrees/12`,
+        current: false,
+        running: { pid: 3, url: 'http://127.0.0.1:1' },
+        conversations: [],
+      },
+    ],
+    system: () => ({ process: { url: 'http://127.0.0.1:4747' } }),
+    invoke: async (extension: string) => {
+      if (extension === 'status') return { questions: { count: 0 }, branches: [] }
+      throw new Error('lineage is off')
+    },
+  } as unknown as ExtensionHost
+  try {
+    expect(await board(host, new AbortController().signal)).toEqual([
+      {
+        name: 'here',
+        root: '/work/here',
+        current: true,
+        url: 'http://127.0.0.1:4747',
+        previews: 1,
+        state: { questions: { count: 0 }, branches: [], failures: 0 },
+      },
+      {
+        name: 'other',
+        root: '/work/other',
+        current: false,
+        url,
+        previews: 0,
+        state: {
+          questions: { count: 1, first: 'Ship it?' },
+          branches: [{ id: 7, title: 'Fix it', busy: true }],
+          failures: 1,
+          behind: 2,
+          landing: { title: 'Board', at: 40 },
+        },
+      },
+      { name: 'stopped', root: '/work/stopped', current: false, activeAt: 12, previews: 0 },
+    ])
+  } finally {
+    other.close()
+  }
 })

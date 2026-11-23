@@ -50,6 +50,8 @@ export type Status = {
   }
   /** Conversations running a turn now. */
   busy: number
+  /** Open branches (coordinators not concluded), newest input first; `busy` while a turn runs. */
+  branches: { id: ConversationId; title?: string; busy: boolean; inputAt?: number }[]
   /** Every discovered extension; `error` is why its server facet failed to load. */
   extensions: {
     name: string

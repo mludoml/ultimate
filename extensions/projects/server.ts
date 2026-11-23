@@ -1,4 +1,5 @@
 import { join } from 'node:path'
+import type { JsonValue } from '@earendil-works/chord/json'
 import { BACKGROUND_CONTEXT as context } from '@earendil-works/chord/context'
 import { defineExtension } from '@earendil-works/pi-durable'
 import { implementAction } from '../../lib/actions.ts'
@@ -9,10 +10,11 @@ import type { GithubRepo } from '../../lib/project-identity.ts'
 import { postAction } from '../../lib/remote.ts'
 import type { ExtensionHost } from '../../server/extensions.ts'
 import { MessagesApi } from '../messages/api.ts'
-import { ListAction, PinAction } from './refs.ts'
-import type { RunningProject } from './refs.ts'
+import { BoardAction, ListAction, PinAction } from './refs.ts'
+import type { BoardProject, ProjectState, RunningProject } from './refs.ts'
 
 const REMOTE_COUNTS_TIMEOUT_MS = 1_500
+const DAY = 24 * 60 * 60_000
 
 type Counts = { busy: number; questions: number }
 
@@ -96,6 +98,103 @@ export async function list(host: ExtensionHost, signal: AbortSignal): Promise<Ru
   )
 }
 
+type Status = {
+  questions?: { count?: number; first?: { text?: string } }
+  branches?: { id: number; title?: string; busy: boolean }[]
+  failures?: unknown[]
+  head?: { behind?: number }
+}
+type Landing = { type: string; title?: string; feature?: string; at?: number }
+
+async function projectState(
+  call: (extension: string, action: string, args: JsonValue) => Promise<unknown>,
+): Promise<ProjectState | undefined> {
+  const [status, info] = await Promise.all([
+    call('status', 'status', { since: Date.now() - DAY }).catch(meansNone) as Promise<
+      Status | undefined
+    >,
+    call('lineage', 'info', null).catch(meansNone) as Promise<{ roots?: number[] } | undefined>,
+  ])
+  if (!status?.questions) return undefined
+  const root = info?.roots?.[0]
+  const [landing] =
+    root === undefined
+      ? []
+      : (((await call('lineage', 'recent', { id: root, limit: 1, types: ['landed'] }).catch(
+          meansNone,
+        )) as Landing[] | undefined) ?? [])
+  return {
+    questions: {
+      count: status.questions.count ?? 0,
+      ...(status.questions.first?.text ? { first: status.questions.first.text } : {}),
+    },
+    branches: (status.branches ?? []).map(({ id, title, busy }) => ({
+      id,
+      ...(title ? { title } : {}),
+      busy,
+    })),
+    failures: status.failures?.length ?? 0,
+    ...(typeof status.head?.behind === 'number' ? { behind: status.head.behind } : {}),
+    ...(landing
+      ? {
+          landing: {
+            ...(landing.title ? { title: landing.title } : {}),
+            ...(landing.feature ? { feature: landing.feature } : {}),
+            ...(landing.at ? { at: landing.at } : {}),
+          },
+        }
+      : {}),
+  }
+}
+
+const checkoutOf = (root: string | undefined) =>
+  /\/\.ultimate\/projects\/(.+)-[\da-f]{8}\/worktrees\/\d+$/.exec(root ?? '')?.[1]
+
+export async function board(host: ExtensionHost, signal: AbortSignal): Promise<BoardProject[]> {
+  const tailnet = await tailnetPorts(host)
+  const all = await host.projects()
+  const previews = new Map<string, number>()
+  for (const project of all) {
+    const parent = checkoutOf(project.root)
+    if (parent && project.running && !project.current)
+      previews.set(parent, (previews.get(parent) ?? 0) + 1)
+  }
+  const boarded = await Promise.all(
+    all
+      .filter((project) => project.current || !checkoutOf(project.root))
+      .map(async ({ root, running, current, conversations, ...project }): Promise<BoardProject> => {
+        const name = checkoutName(project.name, root)
+        const url = current ? host.system().process.url : running?.url
+        const repo = cachedRepo(root)
+        const activeAt = Math.max(
+          0,
+          ...conversations.map(({ inputAt, answerAt }) => Math.max(inputAt ?? 0, answerAt ?? 0)),
+        )
+        const timeout = AbortSignal.any([signal, AbortSignal.timeout(REMOTE_COUNTS_TIMEOUT_MS)])
+        const state = !url
+          ? undefined
+          : await projectState((extension, action, args) =>
+              current
+                ? host.invoke(extension, action, args, timeout)
+                : postAction({ url, label: name }, extension, action, args, timeout),
+            )
+        return {
+          name,
+          ...(root ? { root } : {}),
+          current,
+          ...(url ? { url } : {}),
+          ...(repo && { repo: { name: repo.name, url: repo.url, visibility: repo.visibility } }),
+          ...(root && tailnet[root] ? { tailnetPort: tailnet[root] } : {}),
+          ...(activeAt ? { activeAt } : {}),
+          previews: previews.get(name) ?? 0,
+          ...(state ? { state } : {}),
+        }
+      }),
+  )
+  const rank = (project: BoardProject) => (project.current ? 0 : project.url ? 1 : 2)
+  return boarded.toSorted((a, b) => rank(a) - rank(b) || (b.activeAt ?? 0) - (a.activeAt ?? 0))
+}
+
 const sharedRailPinPath = (host: ExtensionHost) =>
   join(host.userHome, '.ultimate', 'projects-rail.json')
 const readPin = async (path: string) => {
@@ -108,9 +207,10 @@ export default function projects(host: ExtensionHost) {
   return defineExtension({ name: 'projects' })
 }
 
-export const pollActions = ['list', 'pin']
+export const pollActions = ['list', 'pin', 'board']
 
 export const actions = {
+  board: implementAction(BoardAction, (_args, { host, signal }) => board(host, signal)),
   list: implementAction(ListAction, (_args, { host, signal }) => list(host, signal)),
   pin: implementAction(PinAction, async (args, { host }) => {
     const pinned =

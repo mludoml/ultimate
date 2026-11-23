@@ -7,7 +7,7 @@ export const onLoopback = ({ hostname }: Page) =>
 
 const port = (url: string) => new URL(url).port || '80'
 
-export function target(project: RunningProject, page: Page) {
+export function target(project: Pick<RunningProject, 'url' | 'tailnetPort'>, page: Page) {
   if (onLoopback(page)) return `${project.url}/`
   return project.tailnetPort
     ? `${page.protocol}//${page.hostname}:${project.tailnetPort}/`

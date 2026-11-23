@@ -20,6 +20,37 @@ export type RunningProject = {
   tailnetPort?: number
 }
 
+/** What a running project's instance told the board; absent when it did not answer in time. */
+export type ProjectState = {
+  questions: { count: number; first?: string }
+  branches: { id: number; title?: string; busy: boolean }[]
+  /** Failed runs in the last 24 hours. */
+  failures: number
+  /** Commits on origin its clone lacks, when Update knows. */
+  behind?: number
+  landing?: { title?: string; feature?: string; at?: number }
+}
+
+/** One project on this machine for the board, running or stopped. */
+export type BoardProject = {
+  name: string
+  /** Its folder: `ultimate <root>` starts it. */
+  root?: string
+  current: boolean
+  /** Its loopback URL while it runs. */
+  url?: string
+  repo?: RunningProject['repo']
+  tailnetPort?: number
+  /** The latest input or answer of its top-level conversations, epoch ms. */
+  activeAt?: number
+  /** Branch checkouts of it running now (previews). */
+  previews: number
+  state?: ProjectState
+}
+
+/** No arguments → every project on this machine, running first, each with its state when its instance answered. */
+export const BoardAction = actionRef<null, BoardProject[]>('projects', 'board')
+
 /** No arguments → every running instance on this machine, this one included, in project order. */
 export const ListAction = actionRef<null, RunningProject[]>('projects', 'list')
 

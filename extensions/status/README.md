@@ -34,6 +34,7 @@ One compact, read-only summary of this Ultimate for dashboards that poll several
     "first": { "text": "questions 1. Ship it?", "conversation": 57, "message": 812 }
   },
   "busy": 3,
+  "branches": [{ "id": 57, "title": "Fix the build", "busy": true, "inputAt": 1793111000000 }],
   "extensions": [
     { "name": "status", "source": "builtin", "enabled": true },
     { "name": "cloud", "source": "builtin", "enabled": false },
@@ -53,6 +54,7 @@ Each field comes from the API of the extension that owns it, never from its docu
 - `providers`: Health's providers with a login on this machine (`HealthApi.providers()`), with `state` `ok`, `failing` or `unknown`, and the error of a failing one. Absent while Health is off.
 - `questions`: the messages waiting on the user's answer (`MessagesApi.openQuestions()`), `first` the oldest, its text the one line its card shows.
 - `busy`: conversations running a turn now.
+- `branches`: the open branches (coordinator conversations the user has not concluded, `ConversationsApi.concluded()`), newest input first, each with its title, whether a turn runs and its last input time.
 - `extensions`: every discovered extension from the host's registry (`host.extensions()`), with its `source` (`builtin`, `user` or `project`), whether it is `enabled`, and `error` when its server facet failed to load. A dashboard compares the enabled set with what it expects, and spots a broken extension after a rollout.
 
 Another machine calls it over the tailnet like any action, with an `Origin` header of the instance's own origin: `POST <tailnet url>/api/extensions/status/actions/status` with `{ "args": { "since": 1793025600000 } }` answers `{ "result": Status }`. The caller must be in that instance's `tailscale.allow`. It reads only memory, a small file and two documents, so polling every 30 seconds is cheap; the trace counts repeated calls instead of writing each.
