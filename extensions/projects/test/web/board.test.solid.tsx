@@ -77,7 +77,6 @@ beforeEach(async () => {
         questions: { count: 2, first: 'Ship it?' },
         branches: [],
         failures: 1,
-        behind: 3,
         landing: { title: 'Login page', at: 0 },
       },
     },
@@ -110,7 +109,6 @@ it('shows each project’s state, links running ones and offers a stopped one’
   expect(cards[1].textContent).toContain('Ship it?')
   expect(cards[1].textContent).toContain('landed Login page')
   expect(cards[1].textContent).toContain('1 failure today')
-  expect(cards[1].textContent).toContain('3 behind origin')
   expect(cards[2].textContent).toContain('stopped')
   expect(container.textContent).toContain('2 running · 2 stopped')
   await expectDistinctAgentNames(agent)

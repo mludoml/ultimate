@@ -261,9 +261,6 @@ function Running(props: { state: NonNullable<BoardProject['state']>; now: number
             today
           </span>
         </Show>
-        <Show when={(props.state.behind ?? 0) > 0}>
-          <span class="text-warning">{props.state.behind} behind origin</span>
-        </Show>
       </span>
     </span>
   )

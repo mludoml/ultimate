@@ -144,7 +144,6 @@ async function projectState(
     })),
     failures,
     ...(failures >= FAILURES_KEPT ? { failuresCapped: true } : {}),
-    ...(typeof status.head?.behind === 'number' ? { behind: status.head.behind } : {}),
     ...(landing?.type === 'landed'
       ? {
           landing: {
@@ -157,29 +156,38 @@ async function projectState(
   }
 }
 
-const commonDirs = new Map<string, Promise<string | undefined>>()
-const commonDirOf = (root: string) => {
-  if (!commonDirs.has(root))
-    commonDirs.set(
-      root,
-      git(root, 'rev-parse', '--path-format=absolute', '--git-common-dir').catch(meansNone),
-    )
-  return commonDirs.get(root)!
+type Repository = { dir: string; common: string }
+const repositories = new Map<string, Repository>()
+async function repositoryOf(root: string) {
+  const known = repositories.get(root)
+  if (known) return known
+  const [dir, common] = (
+    (await git(root, 'rev-parse', '--path-format=absolute', '--git-dir', '--git-common-dir').catch(
+      meansNone,
+    )) ?? ''
+  ).split('\n')
+  if (!dir || !common) return undefined
+  repositories.set(root, { dir, common })
+  return repositories.get(root)
 }
 
 async function checkoutOwners(known: readonly ProjectInfo[]) {
-  const dirs = await Promise.all(
-    known.map((project) => (project.root ? commonDirOf(project.root) : Promise.resolve(undefined))),
+  const repos = await Promise.all(
+    known.map((project) =>
+      project.root ? repositoryOf(project.root) : Promise.resolve(undefined),
+    ),
   )
-  const mainByDir = new Map<string, string>()
+  const mainByCommon = new Map<string, string>()
   known.forEach((project, index) => {
-    const dir = dirs[index]
-    if (dir && project.root && dirname(dir) === project.root) mainByDir.set(dir, project.home)
+    const repo = repos[index]
+    if (repo && repo.dir === repo.common && dirname(repo.common) === project.root)
+      mainByCommon.set(repo.common, project.home)
   })
   const owners = new Map<string, string>()
   known.forEach((project, index) => {
-    const main = mainByDir.get(dirs[index] ?? '')
-    if (main && main !== project.home) owners.set(project.home, main)
+    const repo = repos[index]
+    const main = repo && repo.dir !== repo.common ? mainByCommon.get(repo.common) : undefined
+    if (main) owners.set(project.home, main)
   })
   return owners
 }
@@ -210,10 +218,13 @@ export async function board(host: ExtensionHost, signal: AbortSignal): Promise<B
           const name = checkoutName(project.name, root)
           const url = current ? host.system().process.url : running?.url
           const repo = cachedRepo(root)
-          const activeAt = Math.max(
-            openedAt ?? 0,
-            ...conversations.map(({ inputAt, answerAt }) => Math.max(inputAt ?? 0, answerAt ?? 0)),
-          )
+          const activeAt =
+            Math.max(
+              0,
+              ...conversations.map(({ inputAt, answerAt }) =>
+                Math.max(inputAt ?? 0, answerAt ?? 0),
+              ),
+            ) || openedAt
           const deadline = AbortSignal.any([signal, AbortSignal.timeout(REMOTE_COUNTS_TIMEOUT_MS)])
           const state = !url
             ? undefined

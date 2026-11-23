@@ -28,8 +28,6 @@ export type ProjectState = {
   failures: number
   /** The instance keeps only its latest failures, so there may be more than `failures`. */
   failuresCapped?: true
-  /** Commits on origin its clone lacks, when Update knows. */
-  behind?: number
   landing?: { title?: string; feature?: string; at?: number }
 }
 
