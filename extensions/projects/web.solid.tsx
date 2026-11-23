@@ -15,11 +15,4 @@ export default defineWebExtension({
       component: Board,
     },
   ],
-  commands: [
-    {
-      id: 'projects.open',
-      title: 'Open Projects',
-      run: (context) => context.showSurface('projects'),
-    },
-  ],
 })

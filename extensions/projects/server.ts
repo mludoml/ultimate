@@ -1,4 +1,4 @@
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import type { JsonValue } from '@earendil-works/chord/json'
 import { BACKGROUND_CONTEXT as context } from '@earendil-works/chord/context'
 import { defineExtension } from '@earendil-works/pi-durable'
@@ -9,6 +9,8 @@ import { githubRepo, readGithubRepo } from '../../lib/project-identity.ts'
 import type { GithubRepo } from '../../lib/project-identity.ts'
 import { postAction } from '../../lib/remote.ts'
 import type { ExtensionHost } from '../../server/extensions.ts'
+import type { ProjectInfo } from '../../server/project.ts'
+import { git } from '../../lib/git.ts'
 import { MessagesApi } from '../messages/api.ts'
 import { BoardAction, ListAction, PinAction } from './refs.ts'
 import type { BoardProject, ProjectState, RunningProject } from './refs.ts'
@@ -100,9 +102,10 @@ export async function list(host: ExtensionHost, signal: AbortSignal): Promise<Ru
   )
 }
 
-function withinDeadline<T>(work: Promise<T>, deadline: AbortSignal) {
+function withinDeadline<T>(work: () => Promise<T>, deadline: AbortSignal) {
+  if (deadline.aborted) return Promise.reject(deadline.reason as Error)
   return Promise.race([
-    work,
+    work(),
     new Promise<never>((_, reject) =>
       deadline.addEventListener('abort', () => reject(deadline.reason as Error), { once: true }),
     ),
@@ -154,22 +157,46 @@ async function projectState(
   }
 }
 
-const ownerHome = (root: string | undefined, homes: readonly string[]) =>
-  homes.find((home) => root?.startsWith(`${home}/`))
+const commonDirs = new Map<string, Promise<string | undefined>>()
+const commonDirOf = (root: string) => {
+  if (!commonDirs.has(root))
+    commonDirs.set(
+      root,
+      git(root, 'rev-parse', '--path-format=absolute', '--git-common-dir').catch(meansNone),
+    )
+  return commonDirs.get(root)!
+}
+
+async function checkoutOwners(known: readonly ProjectInfo[]) {
+  const dirs = await Promise.all(
+    known.map((project) => (project.root ? commonDirOf(project.root) : Promise.resolve(undefined))),
+  )
+  const mainByDir = new Map<string, string>()
+  known.forEach((project, index) => {
+    const dir = dirs[index]
+    if (dir && project.root && dirname(dir) === project.root) mainByDir.set(dir, project.home)
+  })
+  const owners = new Map<string, string>()
+  known.forEach((project, index) => {
+    const main = mainByDir.get(dirs[index] ?? '')
+    if (main && main !== project.home) owners.set(project.home, main)
+  })
+  return owners
+}
 
 export async function board(host: ExtensionHost, signal: AbortSignal): Promise<BoardProject[]> {
   const tailnet = await tailnetPorts(host)
   const all = await host.projects()
-  const homes = all.map((project) => project.home)
+  const owners = await checkoutOwners(all)
   const previews = new Map<string, number>()
   for (const project of all) {
-    const owner = ownerHome(project.root, homes)
+    const owner = owners.get(project.home)
     if (owner && project.running && !project.current)
       previews.set(owner, (previews.get(owner) ?? 0) + 1)
   }
   const boarded = await Promise.all(
     all
-      .filter((project) => project.current || !ownerHome(project.root, homes))
+      .filter((project) => project.current || !owners.has(project.home))
       .map(
         async ({
           root,
@@ -177,13 +204,14 @@ export async function board(host: ExtensionHost, signal: AbortSignal): Promise<B
           running,
           current,
           conversations,
+          openedAt,
           ...project
         }): Promise<BoardProject> => {
           const name = checkoutName(project.name, root)
           const url = current ? host.system().process.url : running?.url
           const repo = cachedRepo(root)
           const activeAt = Math.max(
-            0,
+            openedAt ?? 0,
             ...conversations.map(({ inputAt, answerAt }) => Math.max(inputAt ?? 0, answerAt ?? 0)),
           )
           const deadline = AbortSignal.any([signal, AbortSignal.timeout(REMOTE_COUNTS_TIMEOUT_MS)])
@@ -191,9 +219,10 @@ export async function board(host: ExtensionHost, signal: AbortSignal): Promise<B
             ? undefined
             : await projectState((extension, action, args) =>
                 withinDeadline(
-                  current
-                    ? host.invoke(extension, action, args, deadline)
-                    : postAction({ url, label: name }, extension, action, args, deadline),
+                  () =>
+                    current
+                      ? host.invoke(extension, action, args, deadline)
+                      : postAction({ url, label: name }, extension, action, args, deadline),
                   deadline,
                 ),
               )

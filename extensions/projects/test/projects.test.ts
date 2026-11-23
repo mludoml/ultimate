@@ -76,7 +76,7 @@ it('names the Tailscale port of each project the registry knows, for pages opene
   ])
 })
 
-it('boards every project: this one and another running with their state, a stopped one with its last activity, checkouts in a project home as its previews', async () => {
+it('boards every project: this one and another running with their state, and a stopped one with its last activity', async () => {
   const other = createServer((request, response) => {
     response.setHeader('Content-Type', 'application/json')
     const action = request.url!.split('/').slice(-3).join('/')
@@ -102,6 +102,7 @@ it('boards every project: this one and another running with their state, a stopp
         name: 'stopped',
         root: '/work/stopped',
         home: '/homes/stopped',
+        openedAt: 3,
         current: false,
         conversations: [{ id: 1, inputAt: 9, answerAt: 12 }],
       },
@@ -114,14 +115,6 @@ it('boards every project: this one and another running with their state, a stopp
         conversations: [],
       },
       { name: 'here', root: '/work/here', home: '/homes/here', current: true, conversations: [] },
-      {
-        name: '12',
-        root: '/homes/here/checkouts/12',
-        home: '/homes/here-12',
-        current: false,
-        running: { pid: 3, url: 'http://127.0.0.1:1' },
-        conversations: [],
-      },
     ],
     system: () => ({ process: { url: 'http://127.0.0.1:4747' } }),
     invoke: async (extension: string) => {
@@ -136,7 +129,7 @@ it('boards every project: this one and another running with their state, a stopp
         root: '/work/here',
         current: true,
         url: 'http://127.0.0.1:4747',
-        previews: 1,
+        previews: 0,
         state: { questions: { count: 0 }, branches: [], failures: 0 },
       },
       {
@@ -158,4 +151,23 @@ it('boards every project: this one and another running with their state, a stopp
   } finally {
     other.close()
   }
+})
+
+it('leaves out the state of a project whose deadline has passed, without asking it', async () => {
+  const asked: string[] = []
+  const host = {
+    userHome: await temp('ultimate-projects-'),
+    projects: async () => [
+      { name: 'here', home: '/homes/here', openedAt: 5, current: true, conversations: [] },
+    ],
+    system: () => ({ process: { url: 'http://127.0.0.1:4747' } }),
+    invoke: (extension: string) => {
+      asked.push(extension)
+      return new Promise(() => {})
+    },
+  } as unknown as ExtensionHost
+  expect(await board(host, AbortSignal.abort())).toEqual([
+    { name: 'here', current: true, url: 'http://127.0.0.1:4747', activeAt: 5, previews: 0 },
+  ])
+  expect(asked).toEqual([])
 })
